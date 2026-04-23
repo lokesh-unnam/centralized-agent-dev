@@ -1,10 +1,10 @@
 """
-Unified LLM Client (OpenAI Strict)
+Unified LLM Client (OpenAI Strict) - Async Version
 Single interface used by all agents.
 """
 from __future__ import annotations
-from typing import Any
 import asyncio
+from typing import Any
 import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -40,7 +40,7 @@ async def call(
     user_message: str,
     model: str | None = None,
     max_tokens: int = 4096,
-    temperature: float = 0.7,
+    temperature: int = 0, # Forced to integer for strict API compatibility
 ) -> str:
     """Unified LLM call using OpenAI (Async)."""
     client = _get_client()
@@ -56,7 +56,7 @@ async def call(
             lambda: client.chat.completions.create(
                 model=resolved_model,
                 max_tokens=max_tokens,
-                temperature=temperature,
+                temperature=0, # Fixed: Forced to integer to satisfy strict API validation
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user_message},
@@ -68,6 +68,7 @@ async def call(
         logger.error("llm_client.error", error=str(e), model=resolved_model)
         raise
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 async def call_with_messages(
     system: str,
     messages: list[dict[str, Any]],
@@ -79,16 +80,21 @@ async def call_with_messages(
     resolved_model = model or settings.model_strong
 
     full_messages = [{"role": "system", "content": system}] + messages
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(
-        None,
-        lambda: client.chat.completions.create(
-            model=resolved_model,
-            max_tokens=max_tokens,
-            messages=full_messages,
+    try:
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model=resolved_model,
+                max_tokens=max_tokens,
+                temperature=0, # Fixed: Forced to integer to satisfy strict API validation
+                messages=full_messages,
+            )
         )
-    )
-    return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error("llm_client.error_messages", error=str(e), model=resolved_model)
+        raise
 
 def get_provider_info() -> dict[str, str]:
     return {
